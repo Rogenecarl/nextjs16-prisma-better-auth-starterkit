@@ -17,22 +17,22 @@ import {
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { useForm } from "react-hook-form"
-import { SignUpUserSchema } from "@/schemas"
+import { SignUpProviderSchema } from "@/schemas"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "../ui/form"
 import z from "zod"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { signUpUser } from "@/actions/auth/auth-actions"
+import { signUpProvider } from "@/actions/auth/auth-actions"
 
-export function SignupUserForm() {
+export function SignupProviderForm() {
 
     const [isLoading, setIsLoading] = useState(false)
     const router = useRouter();
 
-    const form = useForm<z.infer<typeof SignUpUserSchema>>({
-        resolver: zodResolver(SignUpUserSchema),
+    const form = useForm<z.infer<typeof SignUpProviderSchema>>({
+        resolver: zodResolver(SignUpProviderSchema),
         defaultValues: {
             name: "",
             email: "",
@@ -41,15 +41,15 @@ export function SignupUserForm() {
         }
     })
 
-    async function onSubmit(values: z.infer<typeof SignUpUserSchema>) {
+    async function onSubmit(values: z.infer<typeof SignUpProviderSchema>) {
         setIsLoading(true);
-        const toastId = toast.loading("Creating account...");
+        const toastId = toast.loading("Creating provider account...");
 
         try {
-            const result = await signUpUser(values);
+            const result = await signUpProvider(values);
 
             if (result.success) {
-                toast.success("Account created successfully!", { id: toastId });
+                toast.success("Provider account created successfully!", { id: toastId });
                 form.reset();
                 router.push("/auth/sign-in");
             } else {
@@ -67,7 +67,7 @@ export function SignupUserForm() {
         <div className="flex flex-col gap-6">
             <Card>
                 <CardHeader className="text-center">
-                    <CardTitle className="text-xl">Create your account</CardTitle>
+                    <CardTitle className="text-xl">Create your provider account</CardTitle>
                     <CardDescription>
                         Enter your email below to create your account
                     </CardDescription>
@@ -136,7 +136,7 @@ export function SignupUserForm() {
                                     </FieldDescription>
                                 </Field>
                                 <Button type="submit" className="w-full" disabled={isLoading}>
-                                    {isLoading ? "Creating account..." : "Register"}
+                                    {isLoading ? "Creating provider account..." : "Register as Provider"}
                                 </Button>
                                 <Field className="flex">
                                     <Button

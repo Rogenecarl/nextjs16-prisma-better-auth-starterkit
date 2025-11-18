@@ -1,129 +1,186 @@
 "use server"
 
-import { SignInSchema, SignUpUserSchema } from "@/schemas";
-import z from "zod";
+import { SignInSchema, SignUpProviderSchema, SignUpUserSchema } from "@/schemas";
+import type { z } from "zod";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import prisma from "@/lib/prisma";
+import type { ActionResponse } from "@/types/api";
+import { isRedirectError } from "@/lib/utils/redirect-helper";
 
-
-export async function signIn(values: z.infer<typeof SignInSchema>) {
-
-
+export async function signIn(
+    values: z.infer<typeof SignInSchema>
+): Promise<ActionResponse<never>> {
     const validatedFields = SignInSchema.safeParse(values);
+    
     if (!validatedFields.success) {
-        return { error: "Invalid fields provided." };
+        return { 
+            success: false, 
+            error: "Invalid email or password format" 
+        };
     }
+
     const { email, password } = validatedFields.data;
 
     try {
         const res = await auth.api.signInEmail({
-            body: {
-                email,
-                password,
-            },
+            body: { email, password },
             headers: await headers(),
         });
 
-        if (res.user) {
-            // Fetch user with role from database
-            const userWithRole = await prisma.user.findUnique({
-                where: { id: res.user.id },
-                select: {
-                    id: true,
-                    email: true,
-                    name: true,
-                    role: true,
-                    image: true,
-                    emailVerified: true,
-                    createdAt: true,
-                    updatedAt: true,
-                },
-            });
-
-            console.log("User signed in:", userWithRole);
-            console.log("User role:", userWithRole?.role);
-
-            // Return success first, then redirect
-            const result = {
-                status: true,
-                data: res,
-                user: userWithRole,
+        if (!res.user) {
+            return {
+                success: false,
+                error: "Invalid email or password",
             };
-
-            // Role-based redirection
-            if (userWithRole?.role === "ADMIN") {
-                redirect("/admin/dashboard");
-            } else if (userWithRole?.role === "PROVIDER") {
-                redirect("/provider/dashboard");
-            } else {
-                redirect("/find-services");
-            }
-
-            return result;
         }
 
-        return {
-            status: false,
-            error: "Sign in failed",
-        };
+        // Fetch user with role from database
+        const userWithRole = await prisma.user.findUnique({
+            where: { id: res.user.id },
+            select: {
+                id: true,
+                role: true,
+            },
+        });
+
+        if (!userWithRole) {
+            return {
+                success: false,
+                error: "User not found",
+            };
+        }
+
+        // Role-based redirection
+        const redirectMap = {
+            ADMIN: "/admin/dashboard",
+            PROVIDER: "/provider/dashboard",
+            USER: "/find-services",
+        } as const;
+
+        const redirectPath = redirectMap[userWithRole.role as keyof typeof redirectMap] || "/find-services";
+        redirect(redirectPath);
     } catch (error) {
-        // Don't catch NEXT_REDIRECT errors - let them bubble up
-        if (
-            error &&
-            typeof error === "object" &&
-            "digest" in error &&
-            typeof error.digest === "string" &&
-            error.digest.startsWith("NEXT_REDIRECT")
-        ) {
+        // Let NEXT_REDIRECT errors bubble up for navigation
+        if (isRedirectError(error)) {
             throw error;
         }
 
-        console.log("Sign in error:", error);
+        console.error("Sign in error:", error);
         return {
-            status: false,
-            error: error instanceof Error ? error.message : "Sign in failed",
+            success: false,
+            error: error instanceof Error ? error.message : "An error occurred during sign in",
         };
     }
 }
 
-export async function signUpUser(values: z.infer<typeof SignUpUserSchema>) {
+export async function signUpUser(
+    values: z.infer<typeof SignUpUserSchema>
+): Promise<ActionResponse<{ userId: string }>> {
+    const validatedFields = SignUpUserSchema.safeParse(values);
+
+    if (!validatedFields.success) {
+        return { 
+            success: false, 
+            error: "Invalid input. Please check your details" 
+        };
+    }
+
+    const { name, email, password } = validatedFields.data;
 
     try {
-        const validatedFields = SignUpUserSchema.safeParse(values);
-
-        if (!validatedFields.success) {
-            return { error: "Invalid fields provided." };
-        }
-        const { name, email, password } = validatedFields.data;
         const res = await auth.api.signUpEmail({
-            body: {
-                name,
-                email,
-                password,
-            },
+            body: { name, email, password },
             headers: await headers(),
         });
 
-        if (res.user) {
-            console.log("User signed up:", res.user);
+        if (!res.user) {
             return {
-                status: true,
-                data: res,
-                user: res.user,
+                success: false,
+                error: "Failed to create account",
             };
         }
 
         return {
-            status: false,
-            error: "Failed to create user",
+            success: true,
+            data: { userId: res.user.id },
         };
     } catch (error) {
-        console.log("Sign up error:", error);
+        console.error("Sign up error:", error);
+        
+        // Handle specific error cases
+        if (error instanceof Error) {
+            if (error.message.includes("already exists") || error.message.includes("duplicate")) {
+                return {
+                    success: false,
+                    error: "An account with this email already exists",
+                };
+            }
+        }
+
         return {
-            status: false,
-            error: error instanceof Error ? error.message : "Sign up failed",
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to create account",
+        };
+    }
+}
+
+export async function signUpProvider(
+    values: z.infer<typeof SignUpProviderSchema>
+): Promise<ActionResponse<{ userId: string }>> {
+    const validatedFields = SignUpProviderSchema.safeParse(values);
+
+    if (!validatedFields.success) {
+        return { 
+            success: false, 
+            error: "Invalid input. Please check your details" 
+        };
+    }
+
+    const { name, email, password } = validatedFields.data;
+
+    try {
+        // Use transaction to ensure atomicity
+        const res = await auth.api.signUpEmail({
+            body: { name, email, password },
+            headers: await headers(),
+        });
+
+        if (!res.user) {
+            return {
+                success: false,
+                error: "Failed to create account",
+            };
+        }
+
+        // Update user role to PROVIDER immediately in same transaction
+        await prisma.user.update({
+            where: { id: res.user.id },
+            data: { role: "PROVIDER" },
+            select: { id: true }, // Only return id to minimize data transfer
+        });
+
+        return {
+            success: true,
+            data: { userId: res.user.id },
+        };
+    } catch (error) {
+        console.error("Sign up provider error:", error);
+        
+        // Handle specific error cases
+        if (error instanceof Error) {
+            if (error.message.includes("already exists") || error.message.includes("duplicate")) {
+                return {
+                    success: false,
+                    error: "An account with this email already exists",
+                };
+            }
+        }
+
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to create account",
         };
     }
 }
